@@ -37,9 +37,26 @@ class Event(Base):
     title_slug: Mapped[str] = mapped_column(String, nullable=False)
     venue: Mapped[str] = mapped_column(String, nullable=False)
     event_date: Mapped[str] = mapped_column(String, nullable=False)  # ISO date string
-    url: Mapped[str] = mapped_column(String, nullable=False)
+    url: Mapped[str] = mapped_column(String, nullable=False, default="")
     description: Mapped[str | None] = mapped_column(Text)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    # Richer date/time support for .ics and calendar export
+    start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    timezone: Mapped[str | None] = mapped_column(String)
+
+    # Recurrence / one-off separation
+    is_recurring: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_all_day: Mapped[bool] = mapped_column(Boolean, default=False)
+    rrule: Mapped[str | None] = mapped_column(Text)
+    recurrence_id: Mapped[str | None] = mapped_column(String)
+
+    # Source provenance
+    source: Mapped[str | None] = mapped_column(String)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    categories: Mapped[str | None] = mapped_column(Text)
+    image_url: Mapped[str | None] = mapped_column(Text)
 
     recommendations: Mapped[list["Recommendation"]] = relationship(back_populates="event")
     feedback: Mapped[list["Feedback"]] = relationship(back_populates="event")
@@ -48,7 +65,7 @@ class Event(Base):
 class Recommendation(Base):
     __tablename__ = "recommendations"
     __table_args__ = (
-        UniqueConstraint("event_id", "user_id", "run_id", name="uq_recommendation"),
+        UniqueConstraint("event_id", "user_id", name="uq_recommendation"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

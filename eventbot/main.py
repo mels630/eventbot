@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
@@ -20,6 +20,7 @@ from .prefs import (
     save_prefs,
     synthesize_household,
 )
+from .ical_export import generate_ical_for_user
 from .scheduler import build_scheduler, reload_scheduler, run_for_user
 from .settings import get_settings
 
@@ -156,8 +157,9 @@ async def user_home(request: Request, slug: str):
         events = await _events_for_user(user.id)
     household = await _household_shared_events(limit=5)
     return templates.TemplateResponse(
+        request,
         "user_home.html",
-        {"request": request, "prefs": prefs, "events": events, "household": household},
+        {"prefs": prefs, "events": events, "household": household},
     )
 
 
@@ -165,7 +167,7 @@ async def user_home(request: Request, slug: str):
 async def user_prefs_page(request: Request, slug: str):
     prefs, _ = await _get_user_or_404(slug)
     return templates.TemplateResponse(
-        "user_prefs.html", {"request": request, "prefs": prefs}
+        request, "user_prefs.html", {"prefs": prefs}
     )
 
 
@@ -261,8 +263,26 @@ async def user_history(request: Request, slug: str):
             )
             runs = list(result)
     return templates.TemplateResponse(
-        "user_history.html", {"request": request, "prefs": prefs, "runs": runs}
+        request, "user_history.html", {"prefs": prefs, "runs": runs}
     )
+
+
+@app.get("/u/{slug}/calendar.ics")
+async def user_ical(slug: str):
+    ics = await generate_ical_for_user(SessionFactory, slug, only_recurring=None)
+    return Response(content=ics, media_type="text/calendar")
+
+
+@app.get("/u/{slug}/one-off.ics")
+async def user_ical_one_off(slug: str):
+    ics = await generate_ical_for_user(SessionFactory, slug, only_recurring=False)
+    return Response(content=ics, media_type="text/calendar")
+
+
+@app.get("/u/{slug}/recurring.ics")
+async def user_ical_recurring(slug: str):
+    ics = await generate_ical_for_user(SessionFactory, slug, only_recurring=True)
+    return Response(content=ics, media_type="text/calendar")
 
 
 # --------------------------------------------------------------------------- #
@@ -275,8 +295,9 @@ async def household_home(request: Request):
     household_prefs = all_prefs.get(HOUSEHOLD_SLUG)
     events = await _household_shared_events()
     return templates.TemplateResponse(
+        request,
         "household_home.html",
-        {"request": request, "prefs": household_prefs, "events": events},
+        {"prefs": household_prefs, "events": events},
     )
 
 
@@ -325,5 +346,5 @@ async def root(request: Request):
     all_prefs = load_all_prefs(settings.preferences_dir)
     users = [p for p in all_prefs.values() if not p.is_household]
     return templates.TemplateResponse(
-        "index.html", {"request": request, "users": users}
+        request, "index.html", {"users": users}
     )

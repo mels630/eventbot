@@ -12,6 +12,7 @@ from .agent import persist_recommendations, promote_shared_events, run_agent
 from .models import Run, User
 from .prefs import UserPrefs, load_all_prefs, HOUSEHOLD_SLUG
 from .settings import Settings
+from .sources import recommend_source_events_for_user, update_source_events
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,10 @@ async def run_for_user(
             await session.flush()
 
             try:
+                # 1. Pull in source-curated events from .ics feeds
+                await update_source_events(session, settings)
+
+                # 2. Agent-driven discovery (skipped if API keys are not set)
                 other_prefs = (
                     [p for p in all_prefs.values() if not p.is_household]
                     if prefs.is_household and all_prefs
@@ -74,11 +79,20 @@ async def run_for_user(
                     session=session,
                     is_household=prefs.is_household,
                 )
+
+                # 3. Score source events for this user (unless this is the household run)
+                source_recs: list = []
                 if not prefs.is_household:
+                    source_recs = await recommend_source_events_for_user(
+                        user=user,
+                        run=run,
+                        session=session,
+                        settings=settings,
+                    )
                     await promote_shared_events(session)
 
                 run.finished_at = datetime.now(UTC)
-                run.event_count = len(events)
+                run.event_count = len(events) + len(source_recs)
 
             except Exception as exc:
                 logger.exception("Run failed for %s", prefs.slug)

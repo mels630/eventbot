@@ -112,6 +112,10 @@ async def send_digest(
     settings: Settings,
     session_factory: async_sessionmaker,
 ) -> None:
+    if not settings.smtp_enabled:
+        logger.info("SMTP not configured; skipping digest for %s", prefs.slug)
+        return
+
     env = _jinja_env()
 
     async with session_factory() as session:

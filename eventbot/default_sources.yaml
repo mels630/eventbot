@@ -1,0 +1,216 @@
+version: "1.0"
+default_timezone: America/Los_Angeles
+window_days: 60
+
+sources:
+  # Sebastopol / West Sonoma
+  - name: "What's Happening in Sebastopol"
+    type: ics
+    url: "https://sebastopolcalendar.com/events/?ical=1"
+    tags: [sebastopol, community]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Sebastopol Community Cultural Center"
+    type: ics
+    url: "https://seb.org/events/?ical=1"
+    tags: [sebastopol, arts, classes, music]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Occidental Center for the Arts"
+    type: ics
+    url: "https://www.occidentalcenterforthearts.org/events/?ical=1"
+    tags: [occidental, arts, music]
+    enabled: false
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Sonoma County Regional Parks"
+    type: ics
+    url: "https://parks.sonomacounty.ca.gov/Play/Calendar?ical=1"
+    tags: [sonoma-county, parks, outdoors]
+    enabled: false
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Sonoma County Library"
+    type: ics
+    url: "https://sonomacounty.libcal.com/ical_subscribe.ics?cid=7788&audience=&categories=&mcs=mcs&date=2026-01-01"
+    tags: [sonoma-county, library, free]
+    enabled: false
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  # Santa Rosa / County-wide
+  - name: "Santa Rosa Recreation & Parks"
+    type: ics
+    url: "https://www.srcity.org/common/modules/iCalendar/iCalendar.aspx?catID=31&feed=calendar"
+    tags: [santa-rosa, parks, sports]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Courthouse Square Events"
+    type: ics
+    url: "https://www.srcity.org/common/modules/iCalendar/iCalendar.aspx?catID=52&feed=calendar"
+    tags: [santa-rosa, downtown, music]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Santa Rosa Junior College"
+    type: ics
+    url: "https://calendar.santarosa.edu/live/ical/events"
+    tags: [santa-rosa, education, college]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Charles M. Schulz Museum"
+    type: ics
+    url: "https://schulzmuseum.org/events/?ical=1"
+    tags: [santa-rosa, museum, family]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Children's Museum of Sonoma County"
+    type: ics
+    url: "https://cmosc.org/events/?ical=1"
+    tags: [santa-rosa, museum, family, kids]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Center for Spiritual Living Santa Rosa"
+    type: ics
+    url: "https://cslsr.org/events/?ical=1"
+    tags: [santa-rosa, spirituality, community]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "GoLocal Cooperative"
+    type: ics
+    url: "https://golocal.coop/?post_type=tribe_events&ical=1&eventDisplay=list"
+    tags: [sonoma-county, community, local]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Gundlach Bundschu Winery"
+    type: ics
+    url: "https://www.gunbun.com/events/?ical=1"
+    tags: [sonoma, wine, music]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Russian River Brewing Company"
+    type: ics
+    url: "https://www.russianriverbrewing.com/the-events-calendar/?ical=1"
+    tags: [santa-rosa, beer, food]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Rancho Nicasio"
+    type: ics
+    url: "https://ranchonicasio.com/?post_type=tribe_events&ical=1&eventDisplay=list"
+    tags: [marin, nicasio, music]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Riley Street Art Supply"
+    type: ics
+    url: "https://tockify.com/api/feeds/ics/rileystreet.art.com"
+    tags: [santa-rosa, art, classes]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Robert Ferguson Observatory"
+    type: ics
+    url: "https://calendar.google.com/calendar/ical/c_rilc5rtgatnr4oln08fo9p5k30%40group.calendar.google.com/public/basic.ics"
+    tags: [kenwood, astronomy, science]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Arlene Francis Center"
+    type: ics
+    url: "https://calendar.google.com/calendar/ical/eventsatarlenefransictheater%40gmail.com/public/basic.ics"
+    tags: [santa-rosa, theater, community]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  # Healdsburg / Windsor / Rohnert Park
+  - name: "Healdsburg Community Events"
+    type: ics
+    url: "https://www.ci.healdsburg.ca.us/common/modules/iCalendar/iCalendar.aspx?catID=33&feed=calendar"
+    tags: [healdsburg, community]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Rohnert Park City Events"
+    type: ics
+    url: "https://www.rpcity.ca.gov/common/modules/iCalendar/iCalendar.aspx?catID=29&feed=calendar"
+    tags: [rohnert-park, community]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Town of Windsor"
+    type: ics
+    url: "https://www.townofwindsor.ca.gov/common/modules/iCalendar/iCalendar.aspx?catID=14&feed=calendar"
+    tags: [windsor, community]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  # Meetup groups in the area
+  - name: "Meetup: Novel Lovers of Sebastopol"
+    type: ics
+    url: "https://www.meetup.com/novel-lovers-of-sebastopol/events/ical/"
+    tags: [sebastopol, books, meetup]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Meetup: North Bay Contra Dance"
+    type: ics
+    url: "https://www.meetup.com/north-bay-contra-dance/events/ical/"
+    tags: [dance, music, contra, meetup]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Meetup: Kayaking Sonoma County & Beyond"
+    type: ics
+    url: "https://www.meetup.com/kayaking-sonoma-beyond/events/ical/"
+    tags: [sonoma-county, kayaking, outdoors, meetup]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Meetup: Sonoma County Women's Wine Club"
+    type: ics
+    url: "https://www.meetup.com/sonoma-county-womens-wine-club/events/ical/"
+    tags: [sonoma-county, wine, social, meetup]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto
+
+  - name: "Meetup: Santa Rosa Toastmasters"
+    type: ics
+    url: "https://www.meetup.com/santa-rosa-toastmasters-public-speaking-meetup-group/events/ical/"
+    tags: [santa-rosa, public-speaking, professional, meetup]
+    enabled: true
+    timezone: America/Los_Angeles
+    recurrence_hint: auto

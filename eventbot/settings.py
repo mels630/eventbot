@@ -5,14 +5,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    anthropic_api_key: str
-    tavily_api_key: str
+    anthropic_api_key: str = ""
+    tavily_api_key: str = ""
 
-    smtp_host: str
+    smtp_host: str = ""
     smtp_port: int = 587
-    smtp_username: str
-    smtp_password: str
-    smtp_from: str
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
 
     data_dir: Path = Path("/data")
 
@@ -27,6 +27,21 @@ class Settings(BaseSettings):
     @property
     def preferences_dir(self) -> Path:
         return self.data_dir / "preferences"
+
+    @property
+    def smtp_enabled(self) -> bool:
+        return all(
+            [
+                self.smtp_host,
+                self.smtp_username,
+                self.smtp_password,
+                self.smtp_from,
+            ]
+        )
+
+    @property
+    def agent_enabled(self) -> bool:
+        return bool(self.anthropic_api_key and self.tavily_api_key)
 
 
 def get_settings() -> Settings:

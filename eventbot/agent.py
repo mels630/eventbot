@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from datetime import datetime, timedelta, UTC
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import anthropic
 from sqlalchemy import select
@@ -136,6 +139,10 @@ async def run_agent(
     all_user_prefs: list[UserPrefs] | None = None,  # required for household mode
 ) -> list[EventCandidate]:
     """Run the event-discovery agent for one user or the household."""
+    if not settings.agent_enabled:
+        logger.warning("Agent disabled: ANTHROPIC_API_KEY and/or TAVILY_API_KEY not set")
+        return []
+
     from tavily import TavilyClient  # lazy import to avoid startup cost
 
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
@@ -312,10 +319,14 @@ async def persist_recommendations(
             select(Recommendation).where(
                 Recommendation.event_id == event.id,
                 Recommendation.user_id == user.id,
-                Recommendation.run_id == run.id,
             )
         )
-        if not existing_rec:
+        if existing_rec:
+            existing_rec.run_id = run.id
+            existing_rec.score = c.score
+            existing_rec.relevance_notes = c.relevance_notes
+            existing_rec.is_household = is_household
+        else:
             session.add(Recommendation(
                 event_id=event.id,
                 user_id=user.id,
