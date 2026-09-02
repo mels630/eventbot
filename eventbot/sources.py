@@ -132,15 +132,15 @@ def _detect_recurrence(component: Any, title: str, description: str, hint: str) 
 
 
 def _to_str(value: Any) -> str:
+    """Return a plain Python string from an icalendar property value.
+
+    Use __str__() rather than to_ical() so iCalendar escape sequences
+    (\\n -> newline, \\, -> comma, etc.) are decoded before we store them.
+    """
     if value is None:
         return ""
     if isinstance(value, list):
         return ", ".join(str(v) for v in value)
-    if hasattr(value, "to_ical"):
-        ical = value.to_ical()
-        if isinstance(ical, bytes):
-            return ical.decode("utf-8")
-        return str(ical)
     return str(value)
 
 
