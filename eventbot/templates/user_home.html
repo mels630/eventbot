@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ prefs.display_name }} · eventbot{% endblock %}
 {% block nav_links %}
+  <a href="/u/{{ prefs.slug }}/calendar">📆 Calendar</a>
   <a href="/u/{{ prefs.slug }}/preferences">⚙️ Preferences</a>
   <a href="/u/{{ prefs.slug }}/history">📋 History</a>
 {% endblock %}
@@ -12,7 +13,7 @@
   <form class="inline" method="post" action="/u/{{ prefs.slug }}/run">
     <button class="btn btn-primary btn-sm" type="submit">▶ Run now</button>
   </form>
-  <a href="/u/{{ prefs.slug }}/preferences" class="btn btn-sm" style="background:#e8e8ed;color:#1d1d1f">⚙️ Preferences</a>
+  <a href="/u/{{ prefs.slug }}/calendar" class="btn btn-sm" style="background:#e8e8ed;color:#1d1d1f">📆 Calendar view</a>
 </div>
 
 {% if events %}
@@ -20,16 +21,17 @@
   {% for ev in events %}
   <div class="card">
     <h3><a href="{{ ev.url }}" target="_blank" rel="noopener">{{ ev.title }}</a></h3>
-    <div class="meta">📍 {{ ev.venue }} &nbsp;·&nbsp; 📅 {{ ev.event_date }}</div>
+    <div class="meta">📍 {{ ev.venue }} &nbsp;·&nbsp; 📅 {{ ev.when or ev.event_date }}</div>
     {% if ev.description %}<p class="desc">{{ ev.description }}</p>{% endif %}
     {% if ev.relevance_notes %}<p class="note">{{ ev.relevance_notes }}</p>{% endif %}
-    <div style="margin-top:10px;display:flex;gap:8px">
+    <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
       <form class="inline" method="post" action="/u/{{ prefs.slug }}/feedback/{{ ev.id }}/1">
         <button class="btn btn-sm btn-up{% if ev.feedback == 1 %} active{% endif %}" type="submit">👍</button>
       </form>
       <form class="inline" method="post" action="/u/{{ prefs.slug }}/feedback/{{ ev.id }}/-1">
         <button class="btn btn-sm btn-down{% if ev.feedback == -1 %} active{% endif %}" type="submit">👎</button>
       </form>
+      <a class="btn btn-sm" style="background:#e8f0fe;color:#1a73e8" href="{{ ev.gcal_url }}" target="_blank" rel="noopener">📆 Add to Google Calendar</a>
     </div>
   </div>
   {% endfor %}
@@ -45,8 +47,11 @@
       <a href="{{ ev.url }}" target="_blank" rel="noopener">{{ ev.title }}</a>
       {% for name in ev.who %}<span class="tag tag-green">{{ name }}</span>{% endfor %}
     </h3>
-    <div class="meta">📍 {{ ev.venue }} &nbsp;·&nbsp; 📅 {{ ev.event_date }}</div>
+    <div class="meta">📍 {{ ev.venue }} &nbsp;·&nbsp; 📅 {{ ev.when or ev.event_date }}</div>
     {% if ev.description %}<p class="desc">{{ ev.description }}</p>{% endif %}
+    <div style="margin-top:8px">
+      <a class="btn btn-sm" style="background:#e8f0fe;color:#1a73e8" href="{{ ev.gcal_url }}" target="_blank" rel="noopener">📆 Add to Google Calendar</a>
+    </div>
   </div>
   {% endfor %}
   <a href="/household/" class="btn btn-sm" style="background:#e6f4ea;color:#137333">See all household picks →</a>

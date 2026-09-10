@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import calendar as _calendar
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Form
@@ -21,6 +23,13 @@ from .prefs import (
     synthesize_household,
 )
 from .ical_export import generate_ical_for_user
+from .calendar_util import (
+    expand_occurrences,
+    format_when,
+    google_calendar_url,
+    has_specific_time,
+    is_upcoming,
+)
 from .scheduler import build_scheduler, reload_scheduler, run_for_user
 from .settings import get_settings
 
@@ -75,6 +84,7 @@ async def _events_for_user(
     is_household: bool = False,
     limit: int = 20,
 ) -> list[dict]:
+    now = datetime.now(UTC)
     async with SessionFactory() as session:
         rows = await session.execute(
             select(Event, Recommendation)
@@ -84,10 +94,11 @@ async def _events_for_user(
                 Recommendation.is_household == is_household,
             )
             .order_by(Recommendation.score.desc())
-            .limit(limit)
         )
         result = []
         for event, rec in rows:
+            if not is_upcoming(event, now):
+                continue
             fb = await session.scalar(
                 select(Feedback).where(
                     Feedback.event_id == event.id,
@@ -99,12 +110,16 @@ async def _events_for_user(
                 "title": event.title,
                 "venue": event.venue,
                 "event_date": event.event_date,
+                "when": format_when(event),
+                "gcal_url": google_calendar_url(event),
                 "url": event.url,
                 "description": event.description,
                 "score": rec.score,
                 "relevance_notes": rec.relevance_notes,
                 "feedback": fb.rating if fb else None,
             })
+            if len(result) >= limit:
+                break
         return result
 
 
@@ -122,10 +137,12 @@ async def _household_shared_events(limit: int = 20) -> list[dict]:
             .where(Event.id.in_(shared_ids))
             .order_by(Recommendation.score.desc())
             .distinct(Event.id)
-            .limit(limit)
         )
+        now = datetime.now(UTC)
         result = []
         for event, rec in rows:
+            if not is_upcoming(event, now):
+                continue
             user_names = await session.execute(
                 select(User.display_name)
                 .join(Recommendation, Recommendation.user_id == User.id)
@@ -137,11 +154,15 @@ async def _household_shared_events(limit: int = 20) -> list[dict]:
                 "title": event.title,
                 "venue": event.venue,
                 "event_date": event.event_date,
+                "when": format_when(event),
+                "gcal_url": google_calendar_url(event),
                 "url": event.url,
                 "description": event.description,
                 "score": rec.score,
                 "who": [r[0] for r in user_names],
             })
+            if len(result) >= limit:
+                break
         return result
 
 
@@ -264,6 +285,104 @@ async def user_history(request: Request, slug: str):
             runs = list(result)
     return templates.TemplateResponse(
         request, "user_history.html", {"prefs": prefs, "runs": runs}
+    )
+
+
+async def _calendar_month(user_id: int, year: int, month: int, tz_name: str) -> dict:
+    """Build a month grid of a user's recommended events (recurring expanded)."""
+    import pytz
+
+    try:
+        tz = pytz.timezone(tz_name or "America/Los_Angeles")
+    except Exception:
+        tz = pytz.timezone("America/Los_Angeles")
+
+    month_start = tz.localize(datetime(year, month, 1))
+    last_day = _calendar.monthrange(year, month)[1]
+    month_end = tz.localize(datetime(year, month, last_day, 23, 59, 59))
+
+    # day-of-month -> list of event dicts
+    by_day: dict[int, list[dict]] = {d: [] for d in range(1, last_day + 1)}
+
+    async with SessionFactory() as session:
+        disliked = (
+            select(Feedback.event_id)
+            .where(Feedback.user_id == user_id, Feedback.rating == -1)
+            .scalar_subquery()
+        )
+        rows = await session.execute(
+            select(Event)
+            .join(Recommendation, Recommendation.event_id == Event.id)
+            .where(Recommendation.user_id == user_id, Event.id.notin_(disliked))
+            .distinct()
+        )
+        for event in rows.scalars():
+            for occ in expand_occurrences(event, month_start, month_end):
+                local = occ.astimezone(tz)
+                by_day[local.day].append({
+                    "title": event.title,
+                    "url": event.url,
+                    "gcal_url": google_calendar_url(event),
+                    "is_all_day": event.is_all_day,
+                    "time": local.strftime("%-I:%M %p") if has_specific_time(event) else "",
+                    "sort_key": local,
+                })
+
+    for d in by_day:
+        by_day[d].sort(key=lambda e: e["sort_key"])
+
+    # Weeks as lists of dates (Sunday-first), spanning the month
+    cal = _calendar.Calendar(firstweekday=6)
+    weeks = cal.monthdatescalendar(year, month)
+
+    return {
+        "year": year,
+        "month": month,
+        "month_name": _calendar.month_name[month],
+        "weeks": weeks,
+        "by_day": by_day,
+        "today": datetime.now(tz).date(),
+    }
+
+
+@app.get("/u/{slug}/calendar", response_class=HTMLResponse)
+async def user_calendar(request: Request, slug: str, year: int | None = None, month: int | None = None):
+    prefs, user = await _get_user_or_404(slug)
+    tz_name = prefs.timezone or "America/Los_Angeles"
+
+    import pytz
+    try:
+        now_local = datetime.now(pytz.timezone(tz_name))
+    except Exception:
+        now_local = datetime.now(UTC)
+
+    year = year or now_local.year
+    month = month or now_local.month
+    # Normalise out-of-range months
+    if month < 1:
+        month, year = 12, year - 1
+    elif month > 12:
+        month, year = 1, year + 1
+
+    data = {"weeks": [], "by_day": {}, "year": year, "month": month,
+            "month_name": _calendar.month_name[month], "today": now_local.date()}
+    if user:
+        data = await _calendar_month(user.id, year, month, tz_name)
+
+    prev_month = month - 1 or 12
+    prev_year = year - 1 if month == 1 else year
+    next_month = month + 1 if month < 12 else 1
+    next_year = year + 1 if month == 12 else year
+
+    return templates.TemplateResponse(
+        request,
+        "calendar_month.html",
+        {
+            "prefs": prefs,
+            "cal": data,
+            "prev": {"year": prev_year, "month": prev_month},
+            "next": {"year": next_year, "month": next_month},
+        },
     )
 
 

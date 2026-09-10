@@ -9,6 +9,7 @@ from icalendar import Calendar, Event as ICalEvent, vDate, vDatetime, vRecur
 from sqlalchemy import not_, select, exists
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from .calendar_util import is_upcoming, parse_date_to_datetime
 from .models import Event, Feedback, Recommendation, User
 
 logger = logging.getLogger(__name__)
@@ -39,19 +40,26 @@ def _build_vevent(event: Event) -> ICalEvent:
             if cat:
                 vevent.add("categories", cat)
 
+    # Fall back to the event_date string when no datetime is stored (e.g. some
+    # agent-discovered events) so we never emit a wrong "now" timestamp.
+    start_at = event.start_at
+    date_only = event.is_all_day
+    if start_at is None:
+        start_at = parse_date_to_datetime(event.event_date, event.timezone or "America/Los_Angeles")
+        date_only = True
+
     # Date / time handling
-    if event.is_all_day:
+    if date_only:
         # All-day event
-        if event.start_at:
-            start_date = event.start_at.date()
+        if start_at:
+            start_date = start_at.date()
             vevent.add("dtstart", start_date, parameters={"VALUE": "DATE"})
-        if event.end_at:
-            # iCalendar all-day end is exclusive
-            end_date = event.end_at.date()
-            vevent.add("dtend", end_date, parameters={"VALUE": "DATE"})
-        else:
-            # No explicit end: end at start + 1 day
-            end_date = event.start_at.date() + timedelta(days=1)
+            if event.end_at:
+                # iCalendar all-day end is exclusive
+                end_date = event.end_at.date()
+            else:
+                # No explicit end: end at start + 1 day
+                end_date = start_date + timedelta(days=1)
             vevent.add("dtend", end_date, parameters={"VALUE": "DATE"})
     else:
         # Timed event
@@ -180,20 +188,19 @@ async def load_user_feed_events(
         elif only_recurring is False:
             query = query.where(Event.is_recurring.is_(False))
 
-        if future_only:
-            from sqlalchemy import func
-            start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days_back)
-            end = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
-            query = query.where(
-                Event.start_at >= start,
-                Event.start_at <= end,
-            )
-
         query = query.order_by(Event.start_at)
         rows = await session.execute(query)
 
+        # Filter to upcoming in Python so recurring series (whose stored start
+        # may be in the past) and events with only a date string are handled
+        # by their next occurrence rather than their first.
+        now = datetime.now(UTC)
         results = []
         for event, rec in rows:
+            if future_only and not is_upcoming(
+                event, now, days_ahead=days_ahead, days_back=days_back
+            ):
+                continue
             results.append(_event_to_dict(event, rec))
         return results
 

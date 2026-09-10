@@ -65,6 +65,22 @@ def test_build_ical_feed_recurring_has_rrule():
     assert str(vevent["rrule"].to_ical(), "utf-8") == "FREQ=WEEKLY;BYDAY=TH"
 
 
+def test_build_ical_feed_date_only_fallback():
+    # Event with no start_at should fall back to event_date (all-day), not "now"
+    event = Event(
+        id=99,
+        title="PorchFest",
+        venue="Neighborhood",
+        event_date="2026-09-12",
+        start_at=None,
+        is_all_day=False,
+    )
+    ics = build_ical_feed([event])
+    cal = Calendar.from_ical(ics)
+    vevent = [c for c in cal.walk() if c.name == "VEVENT"][0]
+    assert vevent["dtstart"].to_ical().decode() == "20260912"
+
+
 def test_build_ical_feed_calname_variants():
     event = Event(id=4, title="Test", venue="X", event_date="2026-08-27")
     default = build_ical_feed([event])

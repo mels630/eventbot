@@ -78,6 +78,7 @@ async def run_for_user(
                     run=run,
                     session=session,
                     is_household=prefs.is_household,
+                    default_tz=prefs.timezone or "America/Los_Angeles",
                 )
 
                 # 3. Score source events for this user (unless this is the household run)

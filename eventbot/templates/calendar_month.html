@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Calendar · {{ prefs.display_name }}{% endblock %}
+{% block nav_links %}
+  <a href="/u/{{ prefs.slug }}/">← Events</a>
+  <a href="/u/{{ prefs.slug }}/preferences">⚙️ Preferences</a>
+{% endblock %}
+{% block head %}
+<style>
+  .cal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; gap:8px; }
+  .cal-head h1 { margin:0; font-size:1.3em; }
+  .cal-nav a { display:inline-block; padding:6px 12px; border-radius:8px; background:#e8e8ed; color:#1d1d1f; text-decoration:none; font-weight:600; font-size:0.9em; }
+  table.cal { width:100%; border-collapse:collapse; table-layout:fixed; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.08); }
+  table.cal th { background:#1a1a2e; color:#fff; font-size:0.72em; padding:6px 2px; font-weight:600; }
+  table.cal td { vertical-align:top; border:1px solid #eee; height:96px; width:14.28%; padding:3px; overflow:hidden; }
+  td.other { background:#fafafa; }
+  td.today { background:#fff8e1; }
+  .daynum { font-size:0.72em; color:#888; font-weight:600; }
+  td.today .daynum { color:#c77700; }
+  .ev { display:block; font-size:0.68em; line-height:1.25; margin-top:2px; padding:1px 3px; border-radius:4px; background:#e8f0fe; color:#1a4fa0; text-decoration:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ev .t { color:#1a73e8; font-weight:600; }
+  .ev-more { font-size:0.66em; color:#888; padding:1px 3px; }
+  /* Mobile: stack into a scrollable agenda-ish grid */
+  @media (max-width: 560px) {
+    table.cal td { height:70px; }
+    .ev { font-size:0.6em; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div class="cal-head">
+  <h1>{{ cal.month_name }} {{ cal.year }}</h1>
+  <div class="cal-nav">
+    <a href="/u/{{ prefs.slug }}/calendar?year={{ prev.year }}&month={{ prev.month }}">‹ Prev</a>
+    <a href="/u/{{ prefs.slug }}/calendar">Today</a>
+    <a href="/u/{{ prefs.slug }}/calendar?year={{ next.year }}&month={{ next.month }}">Next ›</a>
+  </div>
+</div>
+
+<table class="cal">
+  <thead>
+    <tr>
+      <th>Sun</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for week in cal.weeks %}
+    <tr>
+      {% for day in week %}
+        {% set in_month = (day.month == cal.month) %}
+        {% set events = cal.by_day.get(day.day, []) if in_month else [] %}
+        <td class="{% if not in_month %}other{% elif day == cal.today %}today{% endif %}">
+          <div class="daynum">{{ day.day }}</div>
+          {% for ev in events[:4] %}
+            <a class="ev" href="{{ ev.url }}" target="_blank" rel="noopener" title="{{ ev.time }} {{ ev.title }}">{% if ev.time %}<span class="t">{{ ev.time }}</span> {% endif %}{{ ev.title }}</a>
+          {% endfor %}
+          {% if events|length > 4 %}
+            <div class="ev-more">+{{ events|length - 4 }} more</div>
+          {% endif %}
+        </td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<p class="subtitle" style="margin-top:14px">
+  Subscribe in Google Calendar:
+  <a href="/u/{{ prefs.slug }}/calendar.ics">all</a> ·
+  <a href="/u/{{ prefs.slug }}/one-off.ics">one-off</a> ·
+  <a href="/u/{{ prefs.slug }}/recurring.ics">recurring</a>
+</p>
+{% endblock %}

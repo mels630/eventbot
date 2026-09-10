@@ -292,7 +292,10 @@ async def persist_recommendations(
     run: Run,
     session: AsyncSession,
     is_household: bool = False,
+    default_tz: str = "America/Los_Angeles",
 ) -> list[Event]:
+    from .calendar_util import parse_date_to_datetime
+
     saved: list[Event] = []
     for c in candidates:
         slug = _title_slug(c.title)
@@ -303,6 +306,9 @@ async def persist_recommendations(
                 Event.title_slug == slug,
             )
         )
+        # Agent candidates only carry a date string; derive an all-day start
+        # so they flow into the .ics export and calendar views.
+        start_at = parse_date_to_datetime(c.event_date, default_tz)
         if not event:
             event = Event(
                 title=c.title,
@@ -311,9 +317,17 @@ async def persist_recommendations(
                 event_date=c.event_date,
                 url=c.url,
                 description=c.description,
+                start_at=start_at,
+                timezone=default_tz,
+                is_all_day=True,
             )
             session.add(event)
             await session.flush()
+        elif event.start_at is None and start_at is not None:
+            # Backfill timing on an existing agent-created row
+            event.start_at = start_at
+            event.timezone = event.timezone or default_tz
+            event.is_all_day = True
 
         existing_rec = await session.scalar(
             select(Recommendation).where(
