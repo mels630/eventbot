@@ -24,6 +24,7 @@ from .prefs import (
 )
 from .ical_export import generate_ical_for_user
 from .calendar_util import (
+    DEFAULT_TZ,
     expand_occurrences,
     format_when,
     google_calendar_url,
@@ -83,6 +84,7 @@ async def _events_for_user(
     user_id: int,
     is_household: bool = False,
     limit: int = 20,
+    display_tz: str = DEFAULT_TZ,
 ) -> list[dict]:
     now = datetime.now(UTC)
     async with SessionFactory() as session:
@@ -110,8 +112,8 @@ async def _events_for_user(
                 "title": event.title,
                 "venue": event.venue,
                 "event_date": event.event_date,
-                "when": format_when(event),
-                "gcal_url": google_calendar_url(event),
+                "when": format_when(event, display_tz),
+                "gcal_url": google_calendar_url(event, display_tz),
                 "url": event.url,
                 "description": event.description,
                 "score": rec.score,
@@ -123,7 +125,9 @@ async def _events_for_user(
         return result
 
 
-async def _household_shared_events(limit: int = 20) -> list[dict]:
+async def _household_shared_events(
+    limit: int = 20, display_tz: str = DEFAULT_TZ
+) -> list[dict]:
     async with SessionFactory() as session:
         shared_ids = (
             select(Recommendation.event_id)
@@ -154,8 +158,8 @@ async def _household_shared_events(limit: int = 20) -> list[dict]:
                 "title": event.title,
                 "venue": event.venue,
                 "event_date": event.event_date,
-                "when": format_when(event),
-                "gcal_url": google_calendar_url(event),
+                "when": format_when(event, display_tz),
+                "gcal_url": google_calendar_url(event, display_tz),
                 "url": event.url,
                 "description": event.description,
                 "score": rec.score,
@@ -173,10 +177,11 @@ async def _household_shared_events(limit: int = 20) -> list[dict]:
 @app.get("/u/{slug}/", response_class=HTMLResponse)
 async def user_home(request: Request, slug: str):
     prefs, user = await _get_user_or_404(slug)
+    display_tz = prefs.timezone or DEFAULT_TZ
     events: list[dict] = []
     if user:
-        events = await _events_for_user(user.id)
-    household = await _household_shared_events(limit=5)
+        events = await _events_for_user(user.id, display_tz=display_tz)
+    household = await _household_shared_events(limit=5, display_tz=display_tz)
     return templates.TemplateResponse(
         request,
         "user_home.html",
@@ -412,7 +417,8 @@ async def user_ical_recurring(slug: str):
 async def household_home(request: Request):
     all_prefs = load_all_prefs(settings.preferences_dir)
     household_prefs = all_prefs.get(HOUSEHOLD_SLUG)
-    events = await _household_shared_events()
+    display_tz = (household_prefs.timezone if household_prefs else None) or DEFAULT_TZ
+    events = await _household_shared_events(display_tz=display_tz)
     return templates.TemplateResponse(
         request,
         "household_home.html",

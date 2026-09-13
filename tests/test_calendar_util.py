@@ -130,3 +130,14 @@ def test_midnight_event_treated_as_date_only():
     ev = _ev(title="Fair", event_date="2026-09-12",
              start_at=datetime(2026, 9, 12, 0, 0), timezone="America/Los_Angeles")
     assert has_specific_time(ev) is False
+
+
+def test_format_when_converts_utc_source_to_viewer_tz():
+    # Sources that publish UTC times (e.g. Arlene Francis Center) store a naive
+    # UTC wall-clock with timezone='UTC'. Displaying in the event's tz shows a
+    # bogus 2 AM; the viewer's tz must win: 02:00 UTC == 7 PM PDT prior day.
+    ev = _ev(title="Concert", event_date="2026-09-13",
+             start_at=datetime(2026, 9, 13, 2, 0), timezone="UTC")
+    when = format_when(ev, "America/Los_Angeles")
+    assert "7:00 PM" in when
+    assert "Sep 12" in when

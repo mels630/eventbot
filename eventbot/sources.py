@@ -32,6 +32,7 @@ class Source(BaseModel):
     tags: list[str] = Field(default_factory=list)
     enabled: bool = True
     timezone: str | None = None
+    ignore_feed_timezone: bool = False
     recurrence_hint: str = Field(default="auto", pattern=r"^(auto|always|never)$")
 
 
@@ -82,11 +83,13 @@ def _coerce_datetime(
 
     if isinstance(value, datetime):
         is_all_day = False
-        if value.tzinfo is None:
-            # Naive datetimes are interpreted in the source timezone
+        if value.tzinfo is None or source.ignore_feed_timezone:
+            # Interpret the wall-clock time in the source timezone. The
+            # ignore_feed_timezone flag is for feeds that mislabel local times
+            # as UTC (e.g. DTSTART:...T103000Z for a 10:30 AM storytime).
             tz_name = source.timezone or "America/Los_Angeles"
             tz = pytz.timezone(tz_name)
-            value = tz.localize(value)
+            value = tz.localize(value.replace(tzinfo=None))
         tz_name = str(value.tzinfo) if value.tzinfo else None
         return value, is_all_day, tz_name
 

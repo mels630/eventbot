@@ -83,6 +83,7 @@ sources:
     tags: [santa-rosa, museum, family, kids]
     enabled: true
     timezone: America/Los_Angeles
+    ignore_feed_timezone: true
     recurrence_hint: auto
 
   - name: "Center for Spiritual Living Santa Rosa"
