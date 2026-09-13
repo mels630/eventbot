@@ -7,6 +7,7 @@ required) so they can be reused by the web UI, the .ics export, and tests.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from datetime import date, datetime, timedelta, UTC
 from urllib.parse import urlencode
 
@@ -184,3 +185,38 @@ def google_calendar_url(event, tz_name: str | None = None) -> str:
             )
 
     return "https://calendar.google.com/calendar/render?" + urlencode(params)
+
+
+def occurrence_entries(
+    events: Iterable,
+    range_start: datetime,
+    range_end: datetime,
+    tz_name: str = DEFAULT_TZ,
+) -> list[tuple[date, dict]]:
+    """Expand events into per-occurrence display entries within a range.
+
+    Returns (local_date, entry) pairs sorted by start time. All-day and
+    date-only events localize to midnight, so they naturally sort first
+    within a day. Shared by the month grid and the agenda view.
+    """
+    try:
+        tz = pytz.timezone(tz_name or DEFAULT_TZ)
+    except Exception:
+        tz = pytz.timezone(DEFAULT_TZ)
+
+    entries: list[tuple[date, dict]] = []
+    for event in events:
+        for occ in expand_occurrences(event, range_start, range_end):
+            local = occ.astimezone(tz)
+            entries.append((local.date(), {
+                "id": getattr(event, "id", None),
+                "title": event.title,
+                "url": event.url,
+                "venue": getattr(event, "venue", "") or "",
+                "gcal_url": google_calendar_url(event),
+                "is_all_day": getattr(event, "is_all_day", False),
+                "time": local.strftime("%-I:%M %p") if has_specific_time(event) else "",
+                "sort_key": local,
+            }))
+    entries.sort(key=lambda pair: pair[1]["sort_key"])
+    return entries

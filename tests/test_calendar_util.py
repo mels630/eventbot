@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, UTC
+from datetime import date, datetime, timedelta, UTC
 from urllib.parse import parse_qs, urlparse
 
 import pytz
@@ -10,6 +10,7 @@ from eventbot.calendar_util import (
     has_specific_time,
     is_upcoming,
     next_occurrence,
+    occurrence_entries,
     parse_date_to_datetime,
 )
 from eventbot.models import Event
@@ -73,6 +74,48 @@ def test_expand_occurrences_recurring_in_month():
     )
     # September 2026 has 4 Thursdays
     assert len(occ) == 4
+
+
+def test_occurrence_entries_expands_recurring():
+    start = datetime(2026, 1, 1, 18, 0, tzinfo=UTC)
+    ev = _ev(title="Weekly", event_date="2026-01-01", start_at=start,
+             is_recurring=True, rrule="FREQ=WEEKLY;BYDAY=TH", timezone="UTC")
+    entries = occurrence_entries(
+        [ev], datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 9, 30, tzinfo=UTC),
+        "America/Los_Angeles",
+    )
+    assert len(entries) == 4
+    assert all(e["title"] == "Weekly" for _, e in entries)
+
+
+def test_occurrence_entries_sorted_all_day_first():
+    tz = pytz.timezone("America/Los_Angeles")
+    timed = _ev(title="Show", event_date="2026-09-12",
+                start_at=tz.localize(datetime(2026, 9, 12, 19, 0)))
+    allday = _ev(title="Fair", event_date="2026-09-12",
+                 start_at=tz.localize(datetime(2026, 9, 12)), is_all_day=True)
+    entries = occurrence_entries(
+        [timed, allday],
+        tz.localize(datetime(2026, 9, 12)),
+        tz.localize(datetime(2026, 9, 12, 23, 59)),
+        "America/Los_Angeles",
+    )
+    assert [e["title"] for _, e in entries] == ["Fair", "Show"]
+
+
+def test_occurrence_entries_groups_by_viewer_tz_date():
+    # 02:00 UTC Sep 13 == 7 PM PDT Sep 12 — entry lands on the viewer's date
+    ev = _ev(title="Concert", event_date="2026-09-13",
+             start_at=datetime(2026, 9, 13, 2, 0), timezone="UTC")
+    entries = occurrence_entries(
+        [ev],
+        datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 9, 30, tzinfo=UTC),
+        "America/Los_Angeles",
+    )
+    assert len(entries) == 1
+    local_date, entry = entries[0]
+    assert local_date == date(2026, 9, 12)
+    assert entry["time"] == "7:00 PM"
 
 
 def test_google_calendar_url_timed():

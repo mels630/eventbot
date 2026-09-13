@@ -15,10 +15,13 @@
   td.other { background:#fafafa; }
   td.today { background:#fff8e1; }
   .daynum { font-size:0.72em; color:#888; font-weight:600; }
+  .daynum a { color:inherit; text-decoration:none; }
+  .daynum a:hover { text-decoration:underline; }
   td.today .daynum { color:#c77700; }
   .ev { display:block; font-size:0.68em; line-height:1.25; margin-top:2px; padding:1px 3px; border-radius:4px; background:#e8f0fe; color:#1a4fa0; text-decoration:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .ev .t { color:#1a73e8; font-weight:600; }
-  .ev-more { font-size:0.66em; color:#888; padding:1px 3px; }
+  .ev-more { display:block; font-size:0.66em; color:#888; padding:1px 3px; text-decoration:none; }
+  .ev-more:hover { text-decoration:underline; }
   /* Mobile: stack into a scrollable agenda-ish grid */
   @media (max-width: 560px) {
     table.cal td { height:70px; }
@@ -33,6 +36,7 @@
     <a href="/u/{{ prefs.slug }}/calendar?year={{ prev.year }}&month={{ prev.month }}">‹ Prev</a>
     <a href="/u/{{ prefs.slug }}/calendar">Today</a>
     <a href="/u/{{ prefs.slug }}/calendar?year={{ next.year }}&month={{ next.month }}">Next ›</a>
+    <a href="/u/{{ prefs.slug }}/agenda">Agenda</a>
   </div>
 </div>
 
@@ -49,12 +53,12 @@
         {% set in_month = (day.month == cal.month) %}
         {% set events = cal.by_day.get(day.day, []) if in_month else [] %}
         <td class="{% if not in_month %}other{% elif day == cal.today %}today{% endif %}">
-          <div class="daynum">{{ day.day }}</div>
+          <div class="daynum"><a href="/u/{{ prefs.slug }}/agenda?start={{ day.isoformat() }}">{{ day.day }}</a></div>
           {% for ev in events[:4] %}
             <a class="ev" href="{{ ev.url }}" target="_blank" rel="noopener" title="{{ ev.time }} {{ ev.title }}">{% if ev.time %}<span class="t">{{ ev.time }}</span> {% endif %}{{ ev.title }}</a>
           {% endfor %}
           {% if events|length > 4 %}
-            <div class="ev-more">+{{ events|length - 4 }} more</div>
+            <a class="ev-more" href="/u/{{ prefs.slug }}/agenda?start={{ day.isoformat() }}">+{{ events|length - 4 }} more</a>
           {% endif %}
         </td>
       {% endfor %}

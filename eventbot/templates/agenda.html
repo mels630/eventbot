@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% set agenda_base = "/household/agenda" if is_household else "/u/" ~ prefs.slug ~ "/agenda" %}
+{% block title %}{% if is_household %}Household Agenda{% else %}Agenda · {{ prefs.display_name }}{% endif %}{% endblock %}
+{% block nav_links %}
+  {% if is_household %}
+  <a href="/household/">← Feed</a>
+  {% else %}
+  <a href="/u/{{ prefs.slug }}/calendar?year={{ start.year }}&month={{ start.month }}">← Month</a>
+  <a href="/u/{{ prefs.slug }}/">← Events</a>
+  <a href="/u/{{ prefs.slug }}/preferences">⚙️ Preferences</a>
+  {% endif %}
+{% endblock %}
+{% block head %}
+<style>
+  .cal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; gap:8px; }
+  .cal-head h1 { margin:0; font-size:1.3em; }
+  .cal-nav a { display:inline-block; padding:6px 12px; border-radius:8px; background:#e8e8ed; color:#1d1d1f; text-decoration:none; font-weight:600; font-size:0.9em; }
+  .ag-date { font-size:0.95em; font-weight:700; color:#555; margin:20px 0 8px; padding-bottom:6px; border-bottom:1px solid #e0e0e0; }
+  .ag-date.today { color:#c77700; }
+  .ag-ev { display:flex; gap:12px; align-items:baseline; background:#fff; border-radius:10px; padding:10px 14px; margin-bottom:6px; box-shadow:0 1px 3px rgba(0,0,0,0.06); }
+  .ag-time { flex:0 0 64px; font-size:0.82em; font-weight:600; color:#1a73e8; }
+  .ag-body a { color:#1d1d1f; text-decoration:none; font-weight:600; }
+  .ag-body a:hover { text-decoration:underline; }
+  .ag-venue { font-size:0.82em; color:#888; font-weight:400; }
+  .ag-gcal { margin-left:auto; flex-shrink:0; font-size:0.75em; font-weight:600; color:#1a73e8; text-decoration:none; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="cal-head">
+  <h1>{% if is_household %}🏠 {% endif %}Agenda</h1>
+  <div class="cal-nav">
+    <a href="{{ agenda_base }}?start={{ prev }}&days={{ window }}">‹ Prev</a>
+    <a href="{{ agenda_base }}">Today</a>
+    <a href="{{ agenda_base }}?start={{ next }}&days={{ window }}">Next ›</a>
+  </div>
+</div>
+<p class="subtitle">{{ window }} days from {{ start.strftime("%a, %b %-d") }}</p>
+
+{% if groups %}
+  {% for group in groups %}
+    <div class="ag-date{% if group.is_today %} today{% endif %}">
+      {{ group.label }}{% if group.is_today %} <span class="tag">Today</span>{% endif %}
+    </div>
+    {% for ev in group.events %}
+    <div class="ag-ev">
+      <span class="ag-time">{{ ev.time or "All day" }}</span>
+      <span class="ag-body">
+        <a href="{{ ev.url }}" target="_blank" rel="noopener">{{ ev.title }}</a>{% if ev.venue %}<span class="ag-venue"> · {{ ev.venue }}</span>{% endif %}{% for name in ev.who %}<span class="tag tag-green">{{ name }}</span>{% endfor %}
+      </span>
+      <a class="ag-gcal" href="{{ ev.gcal_url }}" target="_blank" rel="noopener" title="Add to Google Calendar">+Cal</a>
+    </div>
+    {% endfor %}
+  {% endfor %}
+{% else %}
+  <div class="empty">No events in this window.</div>
+{% endif %}
+{% endblock %}

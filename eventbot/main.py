@@ -3,14 +3,16 @@ from __future__ import annotations
 import calendar as _calendar
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, UTC
+from datetime import date, datetime, timedelta, UTC
 from pathlib import Path
+
+import pytz
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from .models import Base, Event, Feedback, Recommendation, Run, User
@@ -25,11 +27,10 @@ from .prefs import (
 from .ical_export import generate_ical_for_user
 from .calendar_util import (
     DEFAULT_TZ,
-    expand_occurrences,
     format_when,
     google_calendar_url,
-    has_specific_time,
     is_upcoming,
+    occurrence_entries,
 )
 from .scheduler import build_scheduler, reload_scheduler, run_for_user
 from .settings import get_settings
@@ -78,6 +79,13 @@ async def _get_user_or_404(slug: str) -> tuple[UserPrefs, User]:
     async with SessionFactory() as session:
         user = await session.scalar(select(User).where(User.slug == slug))
     return prefs, user
+
+
+def _safe_tz(tz_name: str | None):
+    try:
+        return pytz.timezone(tz_name or DEFAULT_TZ)
+    except Exception:
+        return pytz.timezone(DEFAULT_TZ)
 
 
 async def _events_for_user(
@@ -293,22 +301,8 @@ async def user_history(request: Request, slug: str):
     )
 
 
-async def _calendar_month(user_id: int, year: int, month: int, tz_name: str) -> dict:
-    """Build a month grid of a user's recommended events (recurring expanded)."""
-    import pytz
-
-    try:
-        tz = pytz.timezone(tz_name or "America/Los_Angeles")
-    except Exception:
-        tz = pytz.timezone("America/Los_Angeles")
-
-    month_start = tz.localize(datetime(year, month, 1))
-    last_day = _calendar.monthrange(year, month)[1]
-    month_end = tz.localize(datetime(year, month, last_day, 23, 59, 59))
-
-    # day-of-month -> list of event dicts
-    by_day: dict[int, list[dict]] = {d: [] for d in range(1, last_day + 1)}
-
+async def _user_events(user_id: int) -> list[Event]:
+    """All events recommended to a user, excluding thumbs-downed ones."""
     async with SessionFactory() as session:
         disliked = (
             select(Feedback.event_id)
@@ -321,20 +315,23 @@ async def _calendar_month(user_id: int, year: int, month: int, tz_name: str) -> 
             .where(Recommendation.user_id == user_id, Event.id.notin_(disliked))
             .distinct()
         )
-        for event in rows.scalars():
-            for occ in expand_occurrences(event, month_start, month_end):
-                local = occ.astimezone(tz)
-                by_day[local.day].append({
-                    "title": event.title,
-                    "url": event.url,
-                    "gcal_url": google_calendar_url(event),
-                    "is_all_day": event.is_all_day,
-                    "time": local.strftime("%-I:%M %p") if has_specific_time(event) else "",
-                    "sort_key": local,
-                })
+        return list(rows.scalars())
 
-    for d in by_day:
-        by_day[d].sort(key=lambda e: e["sort_key"])
+
+async def _calendar_month(user_id: int, year: int, month: int, tz_name: str) -> dict:
+    """Build a month grid of a user's recommended events (recurring expanded)."""
+    tz = _safe_tz(tz_name)
+
+    month_start = tz.localize(datetime(year, month, 1))
+    last_day = _calendar.monthrange(year, month)[1]
+    month_end = tz.localize(datetime(year, month, last_day, 23, 59, 59))
+
+    # day-of-month -> list of event dicts
+    by_day: dict[int, list[dict]] = {d: [] for d in range(1, last_day + 1)}
+    for local_date, entry in occurrence_entries(
+        await _user_events(user_id), month_start, month_end, tz_name
+    ):
+        by_day[local_date.day].append(entry)
 
     # Weeks as lists of dates (Sunday-first), spanning the month
     cal = _calendar.Calendar(firstweekday=6)
@@ -350,16 +347,112 @@ async def _calendar_month(user_id: int, year: int, month: int, tz_name: str) -> 
     }
 
 
+def _grouped_days(entries: list[tuple[date, dict]], today: date) -> list[dict]:
+    """Group (date, entry) pairs into day sections for the agenda template."""
+    groups: list[dict] = []
+    for local_date, entry in entries:
+        if not groups or groups[-1]["date"] != local_date:
+            groups.append({
+                "date": local_date,
+                "label": local_date.strftime("%a, %b %-d"),
+                "is_today": local_date == today,
+                "events": [],
+            })
+        groups[-1]["events"].append(entry)
+    return groups
+
+
+def _half_open(
+    entries: list[tuple[date, dict]], range_end: datetime
+) -> list[tuple[date, dict]]:
+    """Drop occurrences at exactly range_end — expansion is inclusive, but
+    agenda windows are half-open so midnight events don't leak into the
+    previous day's window."""
+    return [pair for pair in entries if pair[1]["sort_key"] < range_end]
+
+
+async def _user_agenda(user_id: int, start: date, days: int, tz_name: str) -> list[dict]:
+    """Day-grouped agenda entries for a user over [start, start + days)."""
+    tz = _safe_tz(tz_name)
+    range_start = tz.localize(datetime(start.year, start.month, start.day))
+    range_end = range_start + timedelta(days=days)
+    entries = _half_open(
+        occurrence_entries(
+            await _user_events(user_id), range_start, range_end, tz_name
+        ),
+        range_end,
+    )
+    return _grouped_days(entries, datetime.now(tz).date())
+
+
+async def _household_agenda(start: date, days: int, tz_name: str) -> list[dict]:
+    """Day-grouped agenda for shared events plus household-run picks."""
+    tz = _safe_tz(tz_name)
+    range_start = tz.localize(datetime(start.year, start.month, start.day))
+    range_end = range_start + timedelta(days=days)
+
+    async with SessionFactory() as session:
+        shared_ids = (
+            select(Recommendation.event_id)
+            .group_by(Recommendation.event_id)
+            .having(func.count(Recommendation.user_id.distinct()) >= 2)
+        ).scalar_subquery()
+
+        household_user_id = await session.scalar(
+            select(User.id).where(User.slug == HOUSEHOLD_SLUG)
+        )
+        conditions = [Event.id.in_(shared_ids)]
+        if household_user_id is not None:
+            conditions.append(
+                Event.id.in_(
+                    select(Recommendation.event_id)
+                    .where(Recommendation.user_id == household_user_id)
+                    .scalar_subquery()
+                )
+            )
+
+        rows = await session.execute(select(Event).where(or_(*conditions)).distinct())
+        events = list(rows.scalars())
+
+        entries = _half_open(
+            occurrence_entries(events, range_start, range_end, tz_name),
+            range_end,
+        )
+
+        event_ids = {e.id for e in events}
+        who_map: dict[int, list[str]] = {}
+        if event_ids:
+            who_rows = await session.execute(
+                select(Recommendation.event_id, User.display_name)
+                .join(User, User.id == Recommendation.user_id)
+                .where(
+                    Recommendation.event_id.in_(event_ids),
+                    User.slug != HOUSEHOLD_SLUG,
+                )
+                .distinct()
+            )
+            for event_id, name in who_rows:
+                who_map.setdefault(event_id, []).append(name)
+
+    for _, entry in entries:
+        entry["who"] = sorted(who_map.get(entry["id"], []))
+    return _grouped_days(entries, datetime.now(tz).date())
+
+
+def _parse_agenda_params(start: str | None, days: int | None, tz) -> tuple[date, int]:
+    today = datetime.now(tz).date()
+    try:
+        start_date = date.fromisoformat(start) if start else today
+    except (ValueError, TypeError):
+        start_date = today
+    return start_date, min(max(days or 14, 1), 60)
+
+
 @app.get("/u/{slug}/calendar", response_class=HTMLResponse)
 async def user_calendar(request: Request, slug: str, year: int | None = None, month: int | None = None):
     prefs, user = await _get_user_or_404(slug)
-    tz_name = prefs.timezone or "America/Los_Angeles"
-
-    import pytz
-    try:
-        now_local = datetime.now(pytz.timezone(tz_name))
-    except Exception:
-        now_local = datetime.now(UTC)
+    tz_name = prefs.timezone or DEFAULT_TZ
+    now_local = datetime.now(_safe_tz(tz_name))
 
     year = year or now_local.year
     month = month or now_local.month
@@ -387,6 +480,35 @@ async def user_calendar(request: Request, slug: str, year: int | None = None, mo
             "cal": data,
             "prev": {"year": prev_year, "month": prev_month},
             "next": {"year": next_year, "month": next_month},
+        },
+    )
+
+
+@app.get("/u/{slug}/agenda", response_class=HTMLResponse)
+async def user_agenda(
+    request: Request,
+    slug: str,
+    start: str | None = None,
+    days: int | None = None,
+):
+    prefs, user = await _get_user_or_404(slug)
+    tz_name = prefs.timezone or DEFAULT_TZ
+    tz = _safe_tz(tz_name)
+    start_date, window = _parse_agenda_params(start, days, tz)
+
+    groups = await _user_agenda(user.id, start_date, window, tz_name) if user else []
+
+    return templates.TemplateResponse(
+        request,
+        "agenda.html",
+        {
+            "prefs": prefs,
+            "is_household": False,
+            "groups": groups,
+            "window": window,
+            "start": start_date,
+            "prev": (start_date - timedelta(days=window)).isoformat(),
+            "next": (start_date + timedelta(days=window)).isoformat(),
         },
     )
 
@@ -423,6 +545,35 @@ async def household_home(request: Request):
         request,
         "household_home.html",
         {"prefs": household_prefs, "events": events},
+    )
+
+
+@app.get("/household/agenda", response_class=HTMLResponse)
+async def household_agenda(
+    request: Request,
+    start: str | None = None,
+    days: int | None = None,
+):
+    all_prefs = load_all_prefs(settings.preferences_dir)
+    household_prefs = all_prefs.get(HOUSEHOLD_SLUG)
+    tz_name = (household_prefs.timezone if household_prefs else None) or DEFAULT_TZ
+    tz = _safe_tz(tz_name)
+    start_date, window = _parse_agenda_params(start, days, tz)
+
+    groups = await _household_agenda(start_date, window, tz_name)
+
+    return templates.TemplateResponse(
+        request,
+        "agenda.html",
+        {
+            "prefs": household_prefs,
+            "is_household": True,
+            "groups": groups,
+            "window": window,
+            "start": start_date,
+            "prev": (start_date - timedelta(days=window)).isoformat(),
+            "next": (start_date + timedelta(days=window)).isoformat(),
+        },
     )
 
 
