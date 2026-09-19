@@ -45,7 +45,11 @@
     <div class="ag-ev">
       <span class="ag-time">{{ ev.time or "All day" }}</span>
       <span class="ag-body">
-        <a href="{{ ev.url }}" target="_blank" rel="noopener">{{ ev.title }}</a>{% if ev.venue %}<span class="ag-venue"> · {{ ev.venue }}</span>{% endif %}{% for name in ev.who %}<span class="tag tag-green">{{ name }}</span>{% endfor %}
+        {% if is_household %}
+        <a href="{{ ev.url }}" target="_blank" rel="noopener">{{ ev.title }}</a>
+        {%- else %}
+        <a href="/u/{{ prefs.slug }}/#event-{{ ev.id }}">{{ ev.title }}</a>
+        {%- endif %}{% if ev.venue %}<span class="ag-venue"> · {{ ev.venue }}</span>{% endif %}{% for name in ev.who %}<span class="tag tag-green">{{ name }}</span>{% endfor %}
       </span>
       <a class="ag-gcal" href="{{ ev.gcal_url }}" target="_blank" rel="noopener" title="Add to Google Calendar">+Cal</a>
     </div>

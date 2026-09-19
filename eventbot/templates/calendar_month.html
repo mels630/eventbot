@@ -55,7 +55,7 @@
         <td class="{% if not in_month %}other{% elif day == cal.today %}today{% endif %}">
           <div class="daynum"><a href="/u/{{ prefs.slug }}/agenda?start={{ day.isoformat() }}">{{ day.day }}</a></div>
           {% for ev in events[:4] %}
-            <a class="ev" href="{{ ev.url }}" target="_blank" rel="noopener" title="{{ ev.time }} {{ ev.title }}">{% if ev.time %}<span class="t">{{ ev.time }}</span> {% endif %}{{ ev.title }}</a>
+            <a class="ev" href="/u/{{ prefs.slug }}/#event-{{ ev.id }}" title="{{ ev.time }} {{ ev.title }}">{% if ev.time %}<span class="t">{{ ev.time }}</span> {% endif %}{{ ev.title }}</a>
           {% endfor %}
           {% if events|length > 4 %}
             <a class="ev-more" href="/u/{{ prefs.slug }}/agenda?start={{ day.isoformat() }}">+{{ events|length - 4 }} more</a>

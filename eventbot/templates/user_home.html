@@ -19,8 +19,13 @@
 
 {% if events %}
   <div class="section-header">Your picks</div>
+  {% set ns = namespace(past_header_shown=false) %}
   {% for ev in events %}
-  <div class="card">
+  {% if ev.is_past and not ns.past_header_shown %}
+    {% set ns.past_header_shown = true %}
+    <div class="section-header">Past events</div>
+  {% endif %}
+  <div class="card{% if ev.is_past %} past{% endif %}" id="event-{{ ev.id }}">
     <h3><a href="{{ ev.url }}" target="_blank" rel="noopener">{{ ev.title }}</a></h3>
     <div class="meta">📍 {{ ev.venue }} &nbsp;·&nbsp; 📅 {{ ev.when or ev.event_date }}</div>
     {% if ev.description %}<p class="desc">{{ ev.description }}</p>{% endif %}
@@ -43,7 +48,7 @@
 {% if household %}
   <div class="section-header">🏠 Your household might enjoy</div>
   {% for ev in household %}
-  <div class="card">
+  <div class="card" id="event-{{ ev.id }}">
     <h3>
       <a href="{{ ev.url }}" target="_blank" rel="noopener">{{ ev.title }}</a>
       {% for name in ev.who %}<span class="tag tag-green">{{ name }}</span>{% endfor %}

@@ -91,7 +91,7 @@ def _safe_tz(tz_name: str | None):
 async def _events_for_user(
     user_id: int,
     is_household: bool = False,
-    limit: int = 20,
+    limit: int | None = 20,
     display_tz: str = DEFAULT_TZ,
 ) -> list[dict]:
     now = datetime.now(UTC)
@@ -105,17 +105,13 @@ async def _events_for_user(
             )
             .order_by(Recommendation.score.desc())
         )
-        result = []
+        fb_rows = await session.execute(
+            select(Feedback).where(Feedback.user_id == user_id)
+        )
+        fb_map = {fb.event_id: fb.rating for fb in fb_rows.scalars()}
+        upcoming, past = [], []
         for event, rec in rows:
-            if not is_upcoming(event, now):
-                continue
-            fb = await session.scalar(
-                select(Feedback).where(
-                    Feedback.event_id == event.id,
-                    Feedback.user_id == user_id,
-                )
-            )
-            result.append({
+            entry = {
                 "id": event.id,
                 "title": event.title,
                 "venue": event.venue,
@@ -126,11 +122,15 @@ async def _events_for_user(
                 "description": event.description,
                 "score": rec.score,
                 "relevance_notes": rec.relevance_notes,
-                "feedback": fb.rating if fb else None,
-            })
-            if len(result) >= limit:
-                break
-        return result
+                "feedback": fb_map.get(event.id),
+                "is_past": not is_upcoming(event, now),
+            }
+            (past if entry["is_past"] else upcoming).append(entry)
+        if limit is not None:
+            return upcoming[:limit]
+        # Feed mode: every recommended event gets a card (calendar/agenda
+        # anchor links must resolve), upcoming first, then past.
+        return upcoming + past
 
 
 async def _household_shared_events(
@@ -188,7 +188,9 @@ async def user_home(request: Request, slug: str):
     display_tz = prefs.timezone or DEFAULT_TZ
     events: list[dict] = []
     if user:
-        events = await _events_for_user(user.id, display_tz=display_tz)
+        # Render all upcoming picks so calendar/agenda anchor links (#event-N)
+        # always have a card to land on.
+        events = await _events_for_user(user.id, limit=None, display_tz=display_tz)
     household = await _household_shared_events(limit=5, display_tz=display_tz)
     return templates.TemplateResponse(
         request,
@@ -265,7 +267,7 @@ async def submit_feedback(slug: str, event_id: int, rating: int):
             else:
                 session.add(Feedback(event_id=event_id, user_id=user.id, rating=rating))
 
-    return RedirectResponse(f"/u/{slug}/", status_code=303)
+    return RedirectResponse(f"/u/{slug}/#event-{event_id}", status_code=303)
 
 
 @app.post("/u/{slug}/run")
