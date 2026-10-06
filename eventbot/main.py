@@ -49,10 +49,49 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
+# Columns added after the initial schema shipped. `Base.metadata.create_all`
+# only creates missing *tables*, never alters existing ones, so on databases
+# created by an older version these columns must be added by hand. Keyed by
+# table name -> {column name: SQL type}.
+_ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "events": {
+        "end_date": "VARCHAR",
+        "end_at": "DATETIME",
+        "timezone": "VARCHAR",
+        "is_recurring": "BOOLEAN",
+        "is_all_day": "BOOLEAN",
+        "rrule": "TEXT",
+        "recurrence_id": "VARCHAR",
+        "source": "VARCHAR",
+        "source_url": "TEXT",
+        "categories": "TEXT",
+        "image_url": "TEXT",
+    },
+}
+
+
+def _apply_column_migrations(conn) -> None:
+    """Idempotently add any missing columns to existing tables (sync, on a
+    raw DBAPI-style connection provided by run_sync)."""
+    from sqlalchemy import inspect as sa_inspect, text
+
+    inspector = sa_inspect(conn)
+    existing_tables = set(inspector.get_table_names())
+    for table, columns in _ADDED_COLUMNS.items():
+        if table not in existing_tables:
+            continue  # create_all will have made it with all columns
+        present = {c["name"] for c in inspector.get_columns(table)}
+        for name, sql_type in columns.items():
+            if name not in present:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
+                logger.info("Migration: added column %s.%s", table, name)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_apply_column_migrations)
 
     scheduler = build_scheduler(SessionFactory, settings)
     scheduler.start()

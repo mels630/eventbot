@@ -227,11 +227,24 @@ def _event_from_component(component: Any, source: Source) -> dict[str, Any]:
 
     is_recurring = _detect_recurrence(component, title, description, source.recurrence_hint)
 
+    # Derive an inclusive end date for multiday spans. For all-day events the
+    # .ics DTEND is exclusive, so step back a day; drop it when it collapses to
+    # the start (single-day event).
+    start_date_str = _event_date(start)
+    end_date_str: str | None = None
+    if end is not None:
+        end_day = end_dt.date()
+        if is_all_day:
+            end_day = end_day - timedelta(days=1)
+        if end_day.isoformat() > start_date_str:
+            end_date_str = end_day.isoformat()
+
     return {
         "title": title,
         "title_slug": _title_slug(title),
         "venue": venue,
-        "event_date": _event_date(start),
+        "event_date": start_date_str,
+        "end_date": end_date_str,
         "url": url,
         "description": description,
         "start_at": start_dt,
@@ -283,7 +296,102 @@ async def _fetch_ics(client: httpx.AsyncClient, source: Source) -> str:
     return _sanitize_ics(response.content)
 
 
+# Fields refreshed on every fetch when we recognise an existing event.
+_MUTABLE_FIELDS = (
+    "url", "description", "is_all_day", "timezone", "is_recurring", "rrule",
+    "recurrence_id", "source", "source_url", "categories", "image_url",
+)
+
+
+def _copy_mutable(existing: Event, event_data: dict[str, Any]) -> None:
+    for key in _MUTABLE_FIELDS:
+        if event_data.get(key) is not None:
+            setattr(existing, key, event_data[key])
+
+
+async def _widen_existing_span(
+    session: AsyncSession, existing: Event, event_data: dict[str, Any]
+) -> None:
+    """Extend ``existing`` to cover the incoming event's date range."""
+    from . import dedup
+    from .eventmatch import bounds_from_strings
+
+    tz = existing.timezone or event_data.get("timezone")
+    es, ee = bounds_from_strings(existing.event_date, existing.end_date, tz)
+    ns, ne = bounds_from_strings(event_data.get("event_date"), event_data.get("end_date"), tz)
+    new_start, new_end = dedup.merge_span(es, ee, ns, ne)
+
+    if new_start is not None:
+        new_start_str = new_start.date().isoformat()
+        # Moving the start earlier changes the (venue, event_date, title_slug)
+        # identity; only do it if no other row already holds that identity.
+        if new_start_str != existing.event_date:
+            conflict = await session.scalar(
+                select(Event.id).where(
+                    Event.venue == existing.venue,
+                    Event.event_date == new_start_str,
+                    Event.title_slug == existing.title_slug,
+                    Event.id != existing.id,
+                )
+            )
+            if conflict is None:
+                existing.event_date = new_start_str
+                existing.start_at = new_start
+    if new_end is not None:
+        existing.end_date = new_end.date().isoformat()
+        existing.end_at = new_end
+
+
+async def _find_recurring_master(session: AsyncSession, event_data: dict[str, Any]) -> Event | None:
+    """An existing recurring series with the same venue, title, RRULE and start
+    time. A midnight/all-day start on either side matches any time, so a timed
+    series and an all-day duplicate of it still collapse."""
+    from .eventmatch import time_key
+
+    candidates = await session.scalars(
+        select(Event).where(
+            Event.is_recurring.is_(True),
+            Event.venue == event_data["venue"],
+            Event.title_slug == event_data["title_slug"],
+            Event.rrule == (event_data.get("rrule") or ""),
+        )
+    )
+    incoming_t = time_key(event_data.get("start_at"))
+    for ev in candidates:
+        et = time_key(ev.start_at)
+        if incoming_t is None or et is None or incoming_t == et:
+            return ev
+    return None
+
+
+async def _find_covering_series(
+    session: AsyncSession, event_data: dict[str, Any], start: Any
+) -> Event | None:
+    """A recurring series (same fuzzy title+venue) whose expansion already covers
+    this single occurrence's date — i.e. the standalone row is redundant."""
+    from . import dedup
+    from .calendar_util import expand_occurrences
+
+    if start is None:
+        return None
+    day_start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1) - timedelta(seconds=1)  # stay within the day
+
+    series = await session.scalars(select(Event).where(Event.is_recurring.is_(True)))
+    for ev in series:
+        if dedup.variant_markers(event_data["title"]) != dedup.variant_markers(ev.title):
+            continue
+        if dedup.title_similarity(event_data["title"], ev.title, event_data["venue"], ev.venue) < dedup.TITLE_THRESHOLD:
+            continue
+        if dedup.venue_similarity(event_data["venue"], ev.venue) < dedup.VENUE_THRESHOLD:
+            continue
+        if expand_occurrences(ev, day_start, day_end):
+            return ev
+    return None
+
+
 async def _upsert_event(session: AsyncSession, event_data: dict[str, Any]) -> Event:
+    # 1. Exact identity match — fast path for a re-fetched single-day event.
     existing = await session.scalar(
         select(Event).where(
             Event.venue == event_data["venue"],
@@ -291,15 +399,49 @@ async def _upsert_event(session: AsyncSession, event_data: dict[str, Any]) -> Ev
             Event.title_slug == event_data["title_slug"],
         )
     )
-
     if existing:
-        # Update mutable fields from the latest fetch
-        for key in ("url", "description", "start_at", "end_at", "is_all_day",
-                    "timezone", "is_recurring", "rrule", "recurrence_id",
-                    "source", "source_url", "categories", "image_url"):
+        _copy_mutable(existing, event_data)
+        for key in ("start_at", "end_at"):
             if event_data.get(key) is not None:
                 setattr(existing, key, event_data[key])
         return existing
+
+    # 2. Recurring series: collapse duplicate masters (feeds sometimes emit the
+    #    same RRULE on every occurrence's date). Keep the first-seen master.
+    if event_data.get("is_recurring"):
+        master = await _find_recurring_master(session, event_data)
+        if master is not None:
+            _copy_mutable(master, event_data)
+            return master
+        event = Event(**event_data)
+        session.add(event)
+        await session.flush()
+        return event
+
+    # 3. Non-recurring: if a recurring series already covers this date, the
+    #    standalone occurrence is redundant — fold it into the series.
+    from .eventmatch import bounds_from_strings, find_db_match
+
+    start, end = bounds_from_strings(
+        event_data.get("event_date"), event_data.get("end_date"),
+        event_data.get("timezone"),
+    )
+    series = await _find_covering_series(session, event_data, start)
+    if series is not None:
+        return series
+
+    # 4. Fuzzy match — same event from another feed, or a per-day listing of a
+    #    multiday run.
+    match = await find_db_match(
+        session, event_data["title"], event_data["venue"], start, end,
+        tz=event_data.get("timezone") or "America/Los_Angeles",
+        non_recurring_only=True,
+    )
+    if match is not None:
+        _copy_mutable(match, event_data)
+        await _widen_existing_span(session, match, event_data)
+        await session.flush()
+        return match
 
     event = Event(**event_data)
     session.add(event)
@@ -323,6 +465,7 @@ async def fetch_source(
         cal = Calendar.from_ical(content)
         events: list[Event] = []
 
+        parsed: list[dict] = []
         for component in cal.walk("VEVENT"):
             try:
                 event_data = _event_from_component(component, source)
@@ -334,9 +477,13 @@ async def fetch_source(
             # Include events whose start falls in the window
             if start < window_start or start > window_end:
                 continue
+            parsed.append(event_data)
 
-            event = await _upsert_event(session, event_data)
-            events.append(event)
+        # Process in chronological order so per-day listings of one multiday run
+        # chain onto a single widening span instead of fragmenting.
+        parsed.sort(key=lambda d: d["start_at"])
+        for event_data in parsed:
+            events.append(await _upsert_event(session, event_data))
 
         logger.info("Source %s contributed %d events", source.name, len(events))
         return events

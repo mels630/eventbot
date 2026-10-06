@@ -87,15 +87,41 @@ def next_occurrence(event, reference: datetime) -> datetime | None:
         return start
 
 
+def event_end(event) -> datetime | None:
+    """Best available end datetime for an event: explicit end_at, else parsed
+    end_date, else None (single-day / unknown)."""
+    end = getattr(event, "end_at", None)
+    if end is not None:
+        if end.tzinfo is None:
+            tz_name = getattr(event, "timezone", None) or DEFAULT_TZ
+            try:
+                tz = pytz.timezone(tz_name)
+            except Exception:
+                tz = pytz.timezone(DEFAULT_TZ)
+            return tz.localize(end)
+        return end
+    return parse_date_to_datetime(
+        getattr(event, "end_date", None), getattr(event, "timezone", None) or DEFAULT_TZ
+    )
+
+
 def is_upcoming(event, now: datetime, days_ahead: int = 60, days_back: int = 1) -> bool:
-    """True if the event (or its next recurrence) falls within the window."""
+    """True if the event (or its next recurrence) falls within the window.
+
+    A multiday / ongoing event counts as upcoming while its end date is still
+    in the future, even if it started before the window."""
     now = _aware(now)
     window_start = now - timedelta(days=days_back)
     window_end = now + timedelta(days=days_ahead)
     occ = next_occurrence(event, window_start)
-    if occ is None:
-        return False
-    return window_start <= occ <= window_end
+    if occ is not None and window_start <= occ <= window_end:
+        return True
+    # Ongoing span: started earlier but not yet finished.
+    end = event_end(event)
+    start = event_start(event)
+    if end is not None and start is not None:
+        return start <= window_end and end >= window_start
+    return False
 
 
 def expand_occurrences(
@@ -142,6 +168,17 @@ def format_when(event, tz_name: str | None = None) -> str:
     except Exception:
         pass
     day = start.strftime("%a, %b %-d")
+
+    # Multiday / ongoing span: show a date range instead of a single day.
+    end = event_end(event)
+    if end is not None:
+        try:
+            end_local = end.astimezone(pytz.timezone(tz_name))
+        except Exception:
+            end_local = end
+        if end_local.date() > start.date():
+            return f"{day} – {end_local.strftime('%a, %b %-d')}"
+
     if getattr(event, "is_all_day", False):
         return f"{day} (all day)"
     if not has_specific_time(event):

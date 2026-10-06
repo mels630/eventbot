@@ -21,6 +21,18 @@ def test_event_candidate_defaults():
     c = EventCandidate.from_dict({"title": "X", "venue": "Y", "event_date": "2026-05-15", "url": "http://x.com"})
     assert c.score == 0.5
     assert c.description == ""
+    assert c.end_date == ""
+
+
+def test_event_candidate_parses_end_date():
+    c = EventCandidate.from_dict({
+        "title": "Art Fest",
+        "venue": "Downtown",
+        "event_date": "2026-08-01",
+        "end_date": "2026-08-05",
+        "url": "http://x.com",
+    })
+    assert c.end_date == "2026-08-05"
 
 
 def test_title_slug_normalizes():

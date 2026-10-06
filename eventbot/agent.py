@@ -36,10 +36,12 @@ class EventCandidate:
         description: str,
         score: float,
         relevance_notes: str,
+        end_date: str = "",
     ) -> None:
         self.title = title
         self.venue = venue
         self.event_date = event_date
+        self.end_date = end_date
         self.url = url
         self.description = description
         self.score = score
@@ -51,6 +53,7 @@ class EventCandidate:
             title=d.get("title", ""),
             venue=d.get("venue", "Unknown venue"),
             event_date=d.get("event_date", ""),
+            end_date=d.get("end_date", "") or "",
             url=d.get("url", ""),
             description=d.get("description", ""),
             score=float(d.get("score", 0.5)),
@@ -175,12 +178,18 @@ Your job:
 1. Generate 6-10 targeted web search queries covering different facets of the interests and date range.
 2. For each query, call the web_search tool.
 3. Extract real upcoming events from the results — ignore articles, reviews, or past events.
-4. Deduplicate by (venue + date + title similarity).
-5. Score and rank the top {MAX_RECOMMENDATIONS} events by relevance to the interests listed above.
-6. Return your final ranked list as a JSON array using the finish_with_events tool.
+4. Deduplicate aggressively. Treat listings as the SAME event — and return them only once —
+   when they share a venue and date even if the titles differ in wording, order, or extra
+   decoration (e.g. "Jazz Night at Blue Moon" vs "Blue Moon Presents: Jazz Night — Tickets").
+5. For an event that runs over multiple days or is ongoing (festivals, exhibits, runs), return
+   it ONCE with event_date = the start date and end_date = the end date. Do NOT emit one entry
+   per day.
+6. Score and rank the top {MAX_RECOMMENDATIONS} events by relevance to the interests listed above.
+7. Return your final ranked list as a JSON array using the finish_with_events tool.
 
 Each event object must have:
   title, venue, event_date (YYYY-MM-DD or best approximation), url, description (1-2 sentences), score (0.0-1.0), relevance_notes (why this fits)
+Optionally include end_date (YYYY-MM-DD) for multiday or ongoing events.
 """
 
     tools = [
@@ -209,6 +218,10 @@ Each event object must have:
                                 "title": {"type": "string"},
                                 "venue": {"type": "string"},
                                 "event_date": {"type": "string"},
+                                "end_date": {
+                                    "type": "string",
+                                    "description": "End date (YYYY-MM-DD) for multiday/ongoing events; omit for single-day events.",
+                                },
                                 "url": {"type": "string"},
                                 "description": {"type": "string"},
                                 "score": {"type": "number"},
@@ -286,6 +299,80 @@ def _title_slug(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:80]
 
 
+def _event_bounds(event: Event, tz: str) -> tuple[Any, Any]:
+    """(start, end) datetimes for an existing event, parsed from its date strings."""
+    from .calendar_util import parse_date_to_datetime
+
+    start = parse_date_to_datetime(event.event_date, tz)
+    end = parse_date_to_datetime(event.end_date, tz) if event.end_date else None
+    return start, end
+
+
+async def _find_matching_event(
+    c: EventCandidate,
+    start_at: Any,
+    end_at: Any,
+    seen: list[Event],
+    session: AsyncSession,
+    tz: str,
+) -> Event | None:
+    """Locate an existing event that is the same as candidate ``c`` using fuzzy
+    title+venue+date matching. Checks this run's events first, then the DB."""
+    from . import dedup
+
+    def matches(ev: Event) -> bool:
+        es, ee = _event_bounds(ev, tz)
+        return dedup.is_same_event(
+            c.title, c.venue, start_at, end_at,
+            ev.title, ev.venue, es, ee,
+        )
+
+    # 1. Events already touched during this run (handles batch duplicates and
+    #    avoids depending on a flush being visible to the query below).
+    for ev in seen:
+        if matches(ev):
+            return ev
+
+    seen_ids = {ev.id for ev in seen if ev.id is not None}
+
+    if start_at is None:
+        # Unparseable date: fall back to exact identity match.
+        ev = await session.scalar(
+            select(Event).where(
+                Event.venue == c.venue,
+                Event.event_date == c.event_date,
+                Event.title_slug == _title_slug(c.title),
+            )
+        )
+        return ev if ev and ev.id not in seen_ids else None
+
+    # 2. DB events whose stored span overlaps the candidate's.
+    from .eventmatch import find_db_match
+
+    return await find_db_match(
+        session, c.title, c.venue, start_at, end_at, tz, exclude_ids=seen_ids
+    )
+
+
+def _merge_into_event(
+    event: Event, c: EventCandidate, start_at: Any, end_at: Any, tz: str
+) -> None:
+    """Widen an existing event's span and backfill richer text from candidate ``c``."""
+    from . import dedup
+
+    es, ee = _event_bounds(event, tz)
+    new_start, new_end = dedup.merge_span(es, ee, start_at, end_at)
+    if new_start is not None:
+        event.event_date = new_start.date().isoformat()
+        event.start_at = new_start
+    event.end_date = new_end.date().isoformat() if new_end is not None else None
+    event.end_at = new_end
+    event.timezone = event.timezone or tz
+    event.is_all_day = True
+    event.url = dedup.prefer_richer(event.url, c.url) or event.url or ""
+    event.description = dedup.prefer_richer(event.description, c.description)
+
+
 async def persist_recommendations(
     candidates: list[EventCandidate],
     user: User,
@@ -297,37 +384,38 @@ async def persist_recommendations(
     from .calendar_util import parse_date_to_datetime
 
     saved: list[Event] = []
+    seen: list[Event] = []  # events touched during this call (for batch dedup)
+
     for c in candidates:
-        slug = _title_slug(c.title)
-        event = await session.scalar(
-            select(Event).where(
-                Event.venue == c.venue,
-                Event.event_date == c.event_date,
-                Event.title_slug == slug,
-            )
-        )
-        # Agent candidates only carry a date string; derive an all-day start
-        # so they flow into the .ics export and calendar views.
+        # Agent candidates carry date strings; derive all-day start/end so they
+        # flow into the .ics export and calendar views.
         start_at = parse_date_to_datetime(c.event_date, default_tz)
-        if not event:
+        end_at = parse_date_to_datetime(c.end_date, default_tz) if c.end_date else None
+
+        event = await _find_matching_event(c, start_at, end_at, seen, session, default_tz)
+
+        if event is None:
             event = Event(
                 title=c.title,
-                title_slug=slug,
+                title_slug=_title_slug(c.title),
                 venue=c.venue,
                 event_date=c.event_date,
+                end_date=(end_at.date().isoformat() if end_at is not None else None),
                 url=c.url,
                 description=c.description,
                 start_at=start_at,
+                end_at=end_at,
                 timezone=default_tz,
                 is_all_day=True,
             )
             session.add(event)
             await session.flush()
-        elif event.start_at is None and start_at is not None:
-            # Backfill timing on an existing agent-created row
-            event.start_at = start_at
-            event.timezone = event.timezone or default_tz
-            event.is_all_day = True
+        else:
+            _merge_into_event(event, c, start_at, end_at, default_tz)
+            await session.flush()
+
+        if event not in seen:
+            seen.append(event)
 
         existing_rec = await session.scalar(
             select(Recommendation).where(
@@ -337,8 +425,10 @@ async def persist_recommendations(
         )
         if existing_rec:
             existing_rec.run_id = run.id
-            existing_rec.score = c.score
-            existing_rec.relevance_notes = c.relevance_notes
+            # When several candidates collapse onto one event, keep the best score.
+            if c.score >= existing_rec.score:
+                existing_rec.score = c.score
+                existing_rec.relevance_notes = c.relevance_notes
             existing_rec.is_household = is_household
         else:
             session.add(Recommendation(
@@ -349,8 +439,10 @@ async def persist_recommendations(
                 relevance_notes=c.relevance_notes,
                 is_household=is_household,
             ))
+        await session.flush()
 
-        saved.append(event)
+        if event not in saved:
+            saved.append(event)
 
     await session.flush()
     return saved

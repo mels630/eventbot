@@ -36,7 +36,8 @@ class Event(Base):
     title: Mapped[str] = mapped_column(String, nullable=False)
     title_slug: Mapped[str] = mapped_column(String, nullable=False)
     venue: Mapped[str] = mapped_column(String, nullable=False)
-    event_date: Mapped[str] = mapped_column(String, nullable=False)  # ISO date string
+    event_date: Mapped[str] = mapped_column(String, nullable=False)  # ISO date string (start)
+    end_date: Mapped[str | None] = mapped_column(String)  # ISO date string (end of a multiday span)
     url: Mapped[str] = mapped_column(String, nullable=False, default="")
     description: Mapped[str | None] = mapped_column(Text)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

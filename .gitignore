@@ -3,6 +3,7 @@ __pycache__/
 *.pyo
 .env
 *.db
+*.db.bak-*
 data/eventbot.db
 data/sources.yaml
 data/preferences/*.yaml
