@@ -8,7 +8,7 @@ A self-hosted event recommendation service. An AI agent (Claude Sonnet + Tavily 
 |---|---|
 | Language | Python 3.11+ |
 | Web framework | FastAPI + Jinja2 templates |
-| Scheduler | APScheduler 4.x (in-process, async) |
+| Scheduler | APScheduler 3.x (in-process, async) |
 | LLM | Claude Sonnet (`claude-sonnet-4-6`) via Anthropic SDK |
 | Web search | Tavily API |
 | DB | SQLite + SQLAlchemy async (`aiosqlite`) |

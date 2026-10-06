@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, UTC
 
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
@@ -19,12 +21,21 @@ logger = logging.getLogger(__name__)
 
 def _cron_trigger(prefs: UserPrefs) -> CronTrigger:
     s = prefs.schedule
+    try:
+        tz = ZoneInfo(prefs.timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning(
+            "Unknown timezone %r for %s — falling back to UTC",
+            prefs.timezone,
+            prefs.slug,
+        )
+        tz = ZoneInfo("UTC")
     if s.frequency == "daily":
-        return CronTrigger(hour=s.hour, minute=0)
+        return CronTrigger(hour=s.hour, minute=0, timezone=tz)
     if s.frequency == "monthly":
-        return CronTrigger(day=s.day_of_month, hour=s.hour, minute=0)
+        return CronTrigger(day=s.day_of_month, hour=s.hour, minute=0, timezone=tz)
     # default: weekly
-    return CronTrigger(day_of_week=s.day_of_week[:3].lower(), hour=s.hour, minute=0)
+    return CronTrigger(day_of_week=s.day_of_week[:3].lower(), hour=s.hour, minute=0, timezone=tz)
 
 
 async def _ensure_user(slug: str, display_name: str, session: AsyncSession) -> User:
